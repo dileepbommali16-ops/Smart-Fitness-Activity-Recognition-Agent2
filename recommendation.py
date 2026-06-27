@@ -1,0 +1,158 @@
+"""Exercise-specific recommendations and descriptions for the fitness app."""
+from __future__ import annotations
+
+EXERCISE_DESCRIPTIONS = {
+    "Walking": "A low-impact cardio activity that improves endurance and overall health.",
+    "Running": "A high-intensity cardio exercise ideal for stamina and calorie burn.",
+    "Cycling": "A dynamic cardio workout that strengthens the lower body and improves endurance.",
+    "Yoga": "A mindful movement practice that improves flexibility, balance, and stress relief.",
+    "Pushups": "A bodyweight upper-body strength exercise that targets the chest, shoulders, and triceps.",
+    "Squats": "A foundational lower-body strength movement that targets the quads, glutes, and core.",
+    "Jumping Jacks": "A full-body cardio movement used to raise the heart rate quickly.",
+    "Swimming": "A low-impact full-body workout that improves cardiovascular fitness and strength.",
+    "Weightlifting": "A strength-focused exercise that helps build muscle and improve metabolism.",
+}
+
+EXERCISE_RECOMMENDATIONS = {
+    "Walking": {
+        "warm_up": ["March in place for 3 minutes", "Gentle ankle circles"],
+        "sets_reps": "3 sets of 10-15 minutes",
+        "rest_time": "30-60 seconds between intervals",
+        "hydration": "Drink 250-500 ml of water before and after the session.",
+        "nutrition": "Choose a balanced snack with complex carbs and a bit of protein.",
+        "protein": "15-20 g protein",
+        "recovery": "Stretch calves and hips after the walk to reduce tightness.",
+        "levels": {
+            "Beginner": "Start with 15-20 minute brisk walks.",
+            "Intermediate": "Add intervals of 1 minute faster pace every 5 minutes.",
+            "Advanced": "Try hill walks or longer endurance sessions.",
+        },
+    },
+    "Running": {
+        "warm_up": ["Easy jog for 5 minutes", "Dynamic leg swings"],
+        "sets_reps": "4-6 rounds of 1-2 minutes running with 1-2 minutes walking",
+        "rest_time": "60-90 seconds",
+        "hydration": "Hydrate well before the run and sip water during longer sessions.",
+        "nutrition": "Eat carbs beforehand and include a protein-rich meal afterward.",
+        "protein": "20-25 g protein",
+        "recovery": "Perform mobility work and prioritize sleep after hard sessions.",
+        "levels": {
+            "Beginner": "Run-walk intervals of 1 minute run and 2 minutes walk.",
+            "Intermediate": "Increase to steady runs or longer intervals.",
+            "Advanced": "Add tempo efforts or longer distance training.",
+        },
+    },
+    "Cycling": {
+        "warm_up": ["Light pedaling for 5 minutes", "Bodyweight squats"],
+        "sets_reps": "3-4 sets of 8-12 minutes at moderate effort",
+        "rest_time": "45-60 seconds",
+        "hydration": "Drink water before and after ride; add electrolytes on long rides.",
+        "nutrition": "Choose fruit, oats, or a banana before cycling.",
+        "protein": "15-20 g protein",
+        "recovery": "Perform calf stretches and a slow cool-down.",
+        "levels": {
+            "Beginner": "Keep effort easy and focus on form.",
+            "Intermediate": "Add resistance or interval bursts.",
+            "Advanced": "Try hill climbs or high-intensity intervals.",
+        },
+    },
+    "Yoga": {
+        "warm_up": ["Cat-cow stretches", "Shoulder rolls"],
+        "sets_reps": "2-4 rounds of 8-10 poses",
+        "rest_time": "20-30 seconds between poses",
+        "hydration": "Sip water throughout the session.",
+        "nutrition": "Eat a light meal or snack with protein and healthy fats.",
+        "protein": "10-15 g protein",
+        "recovery": "Focus on deep breathing and gentle stretching after class.",
+        "levels": {
+            "Beginner": "Try beginner flows and longer holds.",
+            "Intermediate": "Increase pose complexity and balance work.",
+            "Advanced": "Practice advanced balancing or strength-focused flows.",
+        },
+    },
+    "Pushups": {
+        "warm_up": ["Arm circles", "Shoulder taps"],
+        "sets_reps": "3-4 sets of 8-15 reps",
+        "rest_time": "45-60 seconds",
+        "hydration": "Drink water before and after training.",
+        "nutrition": "Include a carb-protein snack before your workout.",
+        "protein": "20-25 g protein",
+        "recovery": "Rest the shoulders and chest between sessions.",
+        "levels": {
+            "Beginner": "Use incline pushups or perform fewer reps.",
+            "Intermediate": "Move to standard pushups with controlled tempo.",
+            "Advanced": "Add weighted or explosive variations.",
+        },
+    },
+    "Squats": {
+        "warm_up": ["Bodyweight squats", "Hip circles"],
+        "sets_reps": "3-4 sets of 10-15 reps",
+        "rest_time": "45-60 seconds",
+        "hydration": "Keep water available throughout the session.",
+        "nutrition": "Pair the workout with a protein-rich meal after training.",
+        "protein": "20-25 g protein",
+        "recovery": "Use gentle stretching to relieve lower-body soreness.",
+        "levels": {
+            "Beginner": "Use bodyweight and a shallow range of motion.",
+            "Intermediate": "Add tempo, pauses, or dumbbells.",
+            "Advanced": "Try split squats or weighted back squats.",
+        },
+    },
+    "Jumping Jacks": {
+        "warm_up": ["March in place", "Arm swings"],
+        "sets_reps": "3-5 rounds of 30-45 seconds",
+        "rest_time": "20-30 seconds",
+        "hydration": "Hydrate well because this is a high-intensity cardio movement.",
+        "nutrition": "Fuel with a light carb-based snack if needed.",
+        "protein": "15-20 g protein",
+        "recovery": "Cool down with easy walking and stretching.",
+        "levels": {
+            "Beginner": "Use slower controlled movements.",
+            "Intermediate": "Increase pace and duration.",
+            "Advanced": "Add squat jacks or burpees.",
+        },
+    },
+    "Swimming": {
+        "warm_up": ["Easy laps for 5 minutes", "Arm circles"],
+        "sets_reps": "4-6 sets of 100-200 meters",
+        "rest_time": "45-60 seconds",
+        "hydration": "Hydrate before and after the swim.",
+        "nutrition": "Have a light meal with carbs and protein.",
+        "protein": "20-25 g protein",
+        "recovery": "Take time to stretch and recover from the effort.",
+        "levels": {
+            "Beginner": "Work on form with shorter distances.",
+            "Intermediate": "Increase distance or maintain a brisk pace.",
+            "Advanced": "Try interval sets or longer endurance laps.",
+        },
+    },
+    "Weightlifting": {
+        "warm_up": ["Light cardio for 5 minutes", "Band pull-aparts"],
+        "sets_reps": "3-4 sets of 6-12 reps per exercise",
+        "rest_time": "60-90 seconds",
+        "hydration": "Drink water throughout the session and after.",
+        "nutrition": "Aim for protein and complex carbs around your workout.",
+        "protein": "25-35 g protein",
+        "recovery": "Prioritize sleep and alternate muscle groups between sessions.",
+        "levels": {
+            "Beginner": "Use lighter weights and focus on technique.",
+            "Intermediate": "Increase load gradually and keep rest periods controlled.",
+            "Advanced": "Push intensity with heavier weights or advanced splits.",
+        },
+    },
+}
+
+DEFAULT_RECOMMENDATION = {
+    "warm_up": ["Light mobility flow", "Easy breathing exercises"],
+    "sets_reps": "2-3 sets of 8-12 reps",
+    "rest_time": "45-60 seconds",
+    "hydration": "Keep water nearby and drink regularly.",
+    "nutrition": "Choose a balanced meal with protein and vegetables.",
+    "protein": "15-20 g protein",
+    "recovery": "Rest well and include gentle stretching.",
+    "levels": {
+        "Beginner": "Begin with low intensity and slow progression.",
+        "Intermediate": "Increase volume gradually.",
+        "Advanced": "Add challenge through intensity or duration.",
+    },
+}
