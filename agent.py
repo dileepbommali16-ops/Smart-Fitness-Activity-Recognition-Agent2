@@ -1,26 +1,19 @@
 """
-agent.py
---------
 Smart Fitness AI Agent.
 
 This module turns the existing prediction model, recommendation engine,
-and workout tracker (see utils.py / recommendation.py) into a single
-conversational "agent" that can:
+and workout tracker into a conversational agent with:
 
-  1. Understand what the user wants (predict / log workout / get advice /
-     see progress / just chat) from a free-text message.
-  2. Ask follow-up questions to fill in any missing information
-     (slot-filling), instead of forcing the user to use separate forms.
-  3. Decide the next action on its own and call the right underlying
-     function (predict_activity, save_workout, recommendation lookup,
-     history summary).
-  4. Reply in natural language with the result.
+1. Intent detection
+2. Multi-turn conversation memory
+3. Exact pending-field tracking
+4. Input validation
+5. ML activity prediction
+6. Workout logging
+7. Recommendations
+8. Progress/history analysis
 
-No external LLM / API key is required, so this keeps working on a free
-Streamlit Cloud deployment exactly like the rest of the app. If you later
-want to plug in a real LLM (OpenAI / Anthropic) for richer conversation,
-see `generate_smalltalk_reply()` at the bottom -- that is the single
-place you'd swap in an API call.
+No external LLM/API is required.
 """
 
 from __future__ import annotations
@@ -35,79 +28,192 @@ from recommendation import (
     EXERCISE_DESCRIPTIONS,
     EXERCISE_RECOMMENDATIONS,
 )
-from utils import FEATURE_FIELDS, load_history, load_model, predict_activity, save_workout
 
-# --------------------------------------------------------------------------
-# Slot definitions
-# --------------------------------------------------------------------------
+from utils import (
+    FEATURE_FIELDS,
+    load_history,
+    load_model,
+    predict_activity,
+    save_workout,
+)
+
+
+# ============================================================================
+# FIELD DEFINITIONS
+# ============================================================================
 
 PREDICT_FIELD_NAMES: List[str] = [f["name"] for f in FEATURE_FIELDS]
 
-# Keywords (and a fallback "number + unit" pattern) used to pull each slot
-# value straight out of a free-text sentence, e.g. "I'm 25, weigh 70kg,
-# heart rate 110, ran for 30 minutes and burned 300 calories".
-FIELD_EXTRACTORS: Dict[str, Dict[str, Any]] = {
-    "age": {"keywords": [r"age"], "unit": None},
-    "gender": {"keywords": [], "unit": None},  # handled separately (text match)
-    "height_cm": {"keywords": [r"height"], "unit": r"(\d+(?:\.\d+)?)\s*cm\b"},
-    "weight_kg": {"keywords": [r"weight", r"weigh"], "unit": r"(\d+(?:\.\d+)?)\s*kg\b"},
-    "heart_rate": {"keywords": [r"heart\s*rate", r"\bhr\b"], "unit": r"(\d+(?:\.\d+)?)\s*bpm\b"},
-    "body_temp_c": {"keywords": [r"temp(?:erature)?"], "unit": r"(\d+(?:\.\d+)?)\s*(?:°c|c\b)"},
-    "duration_min": {"keywords": [r"duration"], "unit": r"(\d+(?:\.\d+)?)\s*min"},
-    "calories_burned": {"keywords": [r"calories", r"kcal"], "unit": r"(\d+(?:\.\d+)?)\s*kcal\b"},
-    "steps": {"keywords": [r"steps"], "unit": r"(\d+(?:\.\d+)?)\s*steps\b"},
-    "distance_km": {"keywords": [r"distance"], "unit": r"(\d+(?:\.\d+)?)\s*km\b"},
+FIELD_LABELS: Dict[str, str] = {
+    f["name"]: f["label"] for f in FEATURE_FIELDS
 }
 
-GENDER_WORDS = {"male": "Male", "female": "Female", "other": "Other"}
+GENDER_WORDS = {
+    "male": "Male",
+    "female": "Female",
+    "other": "Other",
+}
 
-FIELD_LABELS: Dict[str, str] = {f["name"]: f["label"] for f in FEATURE_FIELDS}
+
+# ============================================================================
+# VALIDATION RANGES
+# ============================================================================
+
+# These ranges are used only to catch clearly invalid input.
+# They do not change the ML model itself.
+FIELD_RANGES = {
+    "age": (5, 100),
+    "height_cm": (50, 250),
+    "weight_kg": (20, 300),
+    "heart_rate": (30, 250),
+    "body_temp_c": (30, 45),
+    "duration_min": (1, 600),
+    "calories_burned": (1, 5000),
+    "steps": (0, 100000),
+    "distance_km": (0, 500),
+}
 
 
-def _extract_number(text: str, keywords: List[str], unit_pattern: Optional[str]) -> Optional[float]:
-    for kw in keywords:
-        match = re.search(rf"{kw}\D{{0,6}}?(\d+(?:\.\d+)?)", text, flags=re.IGNORECASE)
+# ============================================================================
+# FIELD EXTRACTION
+# ============================================================================
+
+FIELD_EXTRACTORS: Dict[str, Dict[str, Any]] = {
+    "age": {
+        "keywords": [r"\bage\b"],
+        "unit": None,
+    },
+    "gender": {
+        "keywords": [],
+        "unit": None,
+    },
+    "height_cm": {
+        "keywords": [r"\bheight\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*cm\b",
+    },
+    "weight_kg": {
+        "keywords": [r"\bweight\b", r"\bweigh\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*kg\b",
+    },
+    "heart_rate": {
+        "keywords": [r"heart\s*rate", r"\bhr\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*bpm\b",
+    },
+    "body_temp_c": {
+        "keywords": [r"temp(?:erature)?"],
+        "unit": r"(\d+(?:\.\d+)?)\s*(?:°c|c\b)",
+    },
+    "duration_min": {
+        "keywords": [r"\bduration\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*(?:min|minutes?)\b",
+    },
+    "calories_burned": {
+        "keywords": [r"\bcalories\b", r"\bkcal\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*(?:kcal|cal(?:ories)?)\b",
+    },
+    "steps": {
+        "keywords": [r"\bsteps\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*steps?\b",
+    },
+    "distance_km": {
+        "keywords": [r"\bdistance\b"],
+        "unit": r"(\d+(?:\.\d+)?)\s*km\b",
+    },
+}
+
+
+def _extract_number(
+    text: str,
+    keywords: List[str],
+    unit_pattern: Optional[str],
+) -> Optional[float]:
+
+    for keyword in keywords:
+        match = re.search(
+            rf"{keyword}\D{{0,8}}?(\d+(?:\.\d+)?)",
+            text,
+            flags=re.IGNORECASE,
+        )
+
         if match:
             return float(match.group(1))
+
     if unit_pattern:
-        match = re.search(unit_pattern, text, flags=re.IGNORECASE)
+        match = re.search(
+            unit_pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
         if match:
             return float(match.group(1))
+
     return None
 
 
 def extract_prediction_slots(text: str) -> Dict[str, Any]:
-    """Pull as many prediction fields as possible out of a free-text message."""
+    """
+    Extract as many prediction fields as possible from free text.
+    """
+
     found: Dict[str, Any] = {}
 
+    # Gender
     for word, canonical in GENDER_WORDS.items():
         if re.search(rf"\b{word}\b", text, flags=re.IGNORECASE):
             found["gender"] = canonical
             break
 
+    # Numeric fields
     for name, spec in FIELD_EXTRACTORS.items():
+
         if name == "gender":
             continue
-        value = _extract_number(text, spec["keywords"], spec["unit"])
+
+        value = _extract_number(
+            text,
+            spec["keywords"],
+            spec["unit"],
+        )
+
         if value is not None:
             found[name] = value
 
     return found
 
 
+# ============================================================================
+# WORKOUT EXTRACTION
+# ============================================================================
+
 def extract_workout_slots(text: str) -> Dict[str, Any]:
-    """Pull workout-log fields (exercise name, sets, reps, duration, calories, date)."""
+    """
+    Extract workout logging fields from free text.
+    """
+
     found: Dict[str, Any] = {}
 
+    # Exercise name
     name_match = re.search(
-        r"(?:did|logged?|log|record(?:ed)?|add)\s+([a-zA-Z\- ]+?)(?:\s+for|\s+\d|,|\.|$)",
+        r"(?:did|logged?|log|record(?:ed)?|add)\s+"
+        r"([a-zA-Z\- ]+?)"
+        r"(?:\s+for|\s+\d|,|\.|$)",
         text,
         flags=re.IGNORECASE,
     )
-    FILLER_WORDS = {"workout", "exercise", "session", "a workout", "my workout"}
+
+    filler_words = {
+        "workout",
+        "exercise",
+        "session",
+        "a workout",
+        "my workout",
+    }
+
     if name_match:
         candidate = name_match.group(1).strip().title()
-        if candidate and candidate.lower() not in FILLER_WORDS:
+
+        if candidate and candidate.lower() not in filler_words:
             found["exercise_name"] = candidate
 
     patterns = {
@@ -116,302 +222,1070 @@ def extract_workout_slots(text: str) -> Dict[str, Any]:
         "duration": r"(\d+(?:\.\d+)?)\s*(?:min|minutes?)\b",
         "calories_burned": r"(\d+(?:\.\d+)?)\s*(?:kcal|cal(?:ories)?)\b",
     }
+
     for name, pattern in patterns.items():
-        match = re.search(pattern, text, flags=re.IGNORECASE)
+
+        match = re.search(
+            pattern,
+            text,
+            flags=re.IGNORECASE,
+        )
+
         if match:
             found[name] = float(match.group(1))
 
     found.setdefault("date", str(date.today()))
+
     return found
 
 
-# --------------------------------------------------------------------------
-# Intent detection
-# --------------------------------------------------------------------------
+# ============================================================================
+# INTENT DETECTION
+# ============================================================================
 
 INTENT_KEYWORDS = {
-    "predict": ["predict", "which exercise", "what exercise", "recognize", "detect", "identify my"],
-    "log_workout": ["log", "save workout", "record", "add workout", "i did", "i finished", "just did"],
-    "recommend": ["recommend", "suggestion", "tips", "advice", "how should i train", "guide me"],
-    "history": ["history", "progress", "stats", "summary", "how many workouts", "dashboard"],
-    "greet": ["hi", "hello", "hey", "namaste", "hai", "good morning", "good evening"],
+    "predict": [
+        "predict",
+        "which exercise",
+        "what exercise",
+        "recognize",
+        "detect",
+        "identify my",
+    ],
+
+    "log_workout": [
+        "log",
+        "save workout",
+        "record",
+        "add workout",
+        "i did",
+        "i finished",
+        "just did",
+    ],
+
+    "recommend": [
+        "recommend",
+        "suggestion",
+        "tips",
+        "advice",
+        "how should i train",
+        "guide me",
+    ],
+
+    "history": [
+        "history",
+        "progress",
+        "stats",
+        "summary",
+        "how many workouts",
+        "dashboard",
+    ],
+
+    "greet": [
+        "hi",
+        "hello",
+        "hey",
+        "namaste",
+        "hai",
+        "good morning",
+        "good evening",
+    ],
 }
 
 
 def detect_intent(message: str) -> str:
+
     text = message.lower().strip()
+
     for intent, keywords in INTENT_KEYWORDS.items():
-        if any(kw in text for kw in keywords):
-            return intent
+
+        for keyword in keywords:
+
+            if keyword in text:
+                return intent
+
     return "smalltalk"
 
 
-# --------------------------------------------------------------------------
-# Agent state (slot-filling memory for a multi-turn conversation)
-# --------------------------------------------------------------------------
+# ============================================================================
+# AGENT STATE
+# ============================================================================
 
 @dataclass
 class AgentState:
+
     pending_intent: Optional[str] = None
+
+    # NEW:
+    # Exact field for which the agent is currently waiting for an answer.
+    pending_field: Optional[str] = None
+
     slots: Dict[str, Any] = field(default_factory=dict)
 
     def reset(self) -> None:
+
         self.pending_intent = None
+        self.pending_field = None
         self.slots = {}
 
 
-# --------------------------------------------------------------------------
-# The Agent
-# --------------------------------------------------------------------------
+# ============================================================================
+# VALIDATION
+# ============================================================================
+
+def validate_field(
+    field_name: str,
+    value: Any,
+) -> tuple[bool, str]:
+
+    if field_name == "gender":
+
+        if str(value).title() not in {
+            "Male",
+            "Female",
+            "Other",
+        }:
+            return (
+                False,
+                "Gender Male / Female / Other lo enter cheyyandi.",
+            )
+
+        return True, ""
+
+    if field_name not in FIELD_RANGES:
+        return True, ""
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return False, f"{FIELD_LABELS.get(field_name, field_name)} ki number enter cheyyandi."
+
+    minimum, maximum = FIELD_RANGES[field_name]
+
+    if numeric_value < minimum or numeric_value > maximum:
+
+        label = FIELD_LABELS.get(
+            field_name,
+            field_name,
+        )
+
+        return (
+            False,
+            f"❌ {label} value `{numeric_value:g}` valid range lo ledu. "
+            f"Please enter a value between {minimum} and {maximum}.",
+        )
+
+    return True, ""
+
+
+def parse_answer_for_field(
+    message: str,
+    field_name: str,
+) -> Any:
+
+    text = message.strip()
+
+    # ------------------------------------------------------------
+    # Gender
+    # ------------------------------------------------------------
+
+    if field_name == "gender":
+
+        for word, canonical in GENDER_WORDS.items():
+
+            if re.search(
+                rf"\b{word}\b",
+                text,
+                flags=re.IGNORECASE,
+            ):
+                return canonical
+
+        return None
+
+    # ------------------------------------------------------------
+    # Exercise name
+    # ------------------------------------------------------------
+
+    if field_name == "exercise_name":
+
+        if text and not re.fullmatch(
+            r"\d+(?:\.\d+)?",
+            text,
+        ):
+            return text.title()
+
+        return None
+
+    # ------------------------------------------------------------
+    # Number
+    # ------------------------------------------------------------
+
+    number_match = re.search(
+        r"[-+]?\d+(?:\.\d+)?",
+        text,
+    )
+
+    if number_match:
+
+        try:
+            return float(number_match.group(0))
+        except ValueError:
+            return None
+
+    return None
+
+
+# ============================================================================
+# FIELD QUESTIONS
+# ============================================================================
+
+def get_prediction_question(field_name: str) -> str:
+
+    label = FIELD_LABELS.get(
+        field_name,
+        field_name,
+    )
+
+    if field_name == "gender":
+        return f"{label} enti? (Male / Female / Other)"
+
+    return f"{label} entha? (oka number cheppandi)"
+
+
+def get_workout_question(field_name: str) -> str:
+
+    questions = {
+
+        "exercise_name":
+            "Exercise peru enti?",
+
+        "sets":
+            "Enni sets chesaru?",
+
+        "reps":
+            "Prathi set ki enni reps chesaru?",
+
+        "duration":
+            "Enni minutes chesaru?",
+
+        "calories_burned":
+            "Enni calories burn ayyayi? Approx value ayina parledu.",
+    }
+
+    return questions.get(
+        field_name,
+        f"{field_name} enti?",
+    )
+
+
+# ============================================================================
+# FITNESS AGENT
+# ============================================================================
 
 class FitnessAgent:
-    """Conversational wrapper around the model, tracker, and recommendations."""
+    """
+    Conversational wrapper around the model,
+    workout tracker and recommendation system.
+    """
 
     def __init__(self) -> None:
+
         self._model_bundle: Optional[Dict[str, Any]] = None
+
         self._model_error: Optional[str] = None
 
-    # ---- model loading -----------------------------------------------
+    # ------------------------------------------------------------------------
+    # MODEL
+    # ------------------------------------------------------------------------
+
     def _ensure_model(self) -> bool:
+
         if self._model_bundle is not None:
             return True
+
         if self._model_error is not None:
             return False
+
         try:
+
             self._model_bundle = load_model()
+
             return True
-        except Exception as exc:  # noqa: BLE001 - surfaced to the user as a chat message
+
+        except Exception as exc:
+
             self._model_error = str(exc)
+
             return False
 
-    # ---- main entry point ----------------------------------------------
-    def respond(self, message: str, state: AgentState) -> str:
-        """Decide what to do with `message` given the current AgentState, act, and reply."""
-        message = message.strip()
-        if not message:
-            return "Cheppandi, meeku em kavali? (predict / log workout / recommendation / progress)"
+    # ------------------------------------------------------------------------
+    # MAIN RESPOND
+    # ------------------------------------------------------------------------
 
-        # If we're in the middle of collecting slots for a pending action, keep filling them.
+    def respond(
+        self,
+        message: str,
+        state: AgentState,
+    ) -> str:
+
+        message = message.strip()
+
+        if not message:
+
+            return (
+                "Cheppandi, meeku em kavali? "
+                "(predict / log workout / recommendation / progress)"
+            )
+
+        # ====================================================================
+        # IMPORTANT:
+        # If agent is waiting for a specific field, process the answer
+        # against THAT exact field.
+        # ====================================================================
+
         if state.pending_intent == "predict":
-            return self._continue_predict(message, state)
+
+            return self._continue_predict(
+                message,
+                state,
+            )
+
         if state.pending_intent == "log_workout":
-            return self._continue_log_workout(message, state)
+
+            return self._continue_log_workout(
+                message,
+                state,
+            )
+
+        # ====================================================================
+        # New intent
+        # ====================================================================
 
         intent = detect_intent(message)
 
+        # --------------------------------------------------------------------
+        # Greeting
+        # --------------------------------------------------------------------
+
         if intent == "greet":
+
             return (
-                "Hi! Nenu nee Smart Fitness AI Agent 🤖. Nenu ee panulu cheyagalanu:\n"
-                "- **Predict**: your body/movement metrics tho exercise em ani cheptanu\n"
-                "- **Log workout**: 'I did squats, 3 sets 12 reps 20 min 200 calories' laga cheppandi\n"
-                "- **Recommend**: 'give me tips for running' ani adagandi\n"
-                "- **Progress**: 'show my stats' ani adagandi\n"
+                "Hi! Nenu nee Smart Fitness AI Agent 🤖.\n\n"
+                "Nenu ee panulu cheyagalanu:\n"
+                "- **Predict**: nee body/movement metrics tho exercise predict chestanu\n"
+                "- **Log workout**: workout details save chestanu\n"
+                "- **Recommend**: exercise ki fitness tips istanu\n"
+                "- **Progress**: workout history and stats chupistanu\n\n"
                 "Em kavali cheppandi!"
             )
 
+        # --------------------------------------------------------------------
+        # Predict
+        # --------------------------------------------------------------------
+
         if intent == "predict":
+
             state.pending_intent = "predict"
-            state.slots = extract_prediction_slots(message)
-            return self._continue_predict(message, state, already_parsed=True)
+
+            state.slots = extract_prediction_slots(
+                message
+            )
+
+            return self._continue_predict(
+                message,
+                state,
+                already_parsed=True,
+            )
+
+        # --------------------------------------------------------------------
+        # Workout logging
+        # --------------------------------------------------------------------
 
         if intent == "log_workout":
+
             state.pending_intent = "log_workout"
-            state.slots = extract_workout_slots(message)
-            return self._continue_log_workout(message, state, already_parsed=True)
+
+            state.slots = extract_workout_slots(
+                message
+            )
+
+            return self._continue_log_workout(
+                message,
+                state,
+                already_parsed=True,
+            )
+
+        # --------------------------------------------------------------------
+        # Recommendation
+        # --------------------------------------------------------------------
 
         if intent == "recommend":
-            return self._handle_recommend(message)
+
+            return self._handle_recommend(
+                message
+            )
+
+        # --------------------------------------------------------------------
+        # History
+        # --------------------------------------------------------------------
 
         if intent == "history":
+
             return self._handle_history()
+
+        # --------------------------------------------------------------------
+        # Smalltalk
+        # --------------------------------------------------------------------
 
         return self._smalltalk(message)
 
-    # ---- PREDICT flow ----------------------------------------------------
-    def _continue_predict(self, message: str, state: AgentState, already_parsed: bool = False) -> str:
-        if not already_parsed:
-            newly_found = extract_prediction_slots(message)
-            state.slots.update(newly_found)
+    # =========================================================================
+    # PREDICT FLOW
+    # =========================================================================
 
-            # If nothing was matched by keyword/unit, treat a bare reply as the
-            # answer to whichever field we just asked about (e.g. user just
-            # types "170" after being asked for height, or "male" for gender).
-            if not newly_found:
-                missing_now = [name for name in PREDICT_FIELD_NAMES if name not in state.slots]
-                if missing_now:
-                    next_field = missing_now[0]
-                    bare_number = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", message)
-                    if next_field == "gender":
-                        for word, canonical in GENDER_WORDS.items():
-                            if word in message.lower():
-                                state.slots["gender"] = canonical
-                                break
-                    elif bare_number:
-                        state.slots[next_field] = float(bare_number.group(1))
+    def _continue_predict(
+        self,
+        message: str,
+        state: AgentState,
+        already_parsed: bool = False,
+    ) -> str:
 
-        missing = [name for name in PREDICT_FIELD_NAMES if name not in state.slots]
+        # =====================================================================
+        # STEP 1:
+        # If we explicitly asked for a field, answer MUST be processed
+        # against that field first.
+        # =====================================================================
+
+        if not already_parsed and state.pending_field:
+
+            field_name = state.pending_field
+
+            value = parse_answer_for_field(
+                message,
+                field_name,
+            )
+
+            # ---------------------------------------------------------------
+            # Couldn't understand
+            # ---------------------------------------------------------------
+
+            if value is None:
+
+                return (
+                    f"❌ Naku adi ardham kaaledu.\n"
+                    f"{get_prediction_question(field_name)}"
+                )
+
+            # ---------------------------------------------------------------
+            # Validate
+            # ---------------------------------------------------------------
+
+            valid, error_message = validate_field(
+                field_name,
+                value,
+            )
+
+            if not valid:
+
+                return (
+                    f"{error_message}\n\n"
+                    f"{get_prediction_question(field_name)}"
+                )
+
+            # ---------------------------------------------------------------
+            # Save answer
+            # ---------------------------------------------------------------
+
+            state.slots[field_name] = value
+
+            # IMPORTANT:
+            # Clear old pending field so it won't repeat.
+            state.pending_field = None
+
+        # =====================================================================
+        # STEP 2:
+        # If this is the first prediction message, extract all fields.
+        # =====================================================================
+
+        if already_parsed:
+
+            # Validate extracted fields before storing them.
+
+            extracted = dict(state.slots)
+
+            validated_slots: Dict[str, Any] = {}
+
+            for field_name, value in extracted.items():
+
+                valid, _ = validate_field(
+                    field_name,
+                    value,
+                )
+
+                if valid:
+                    validated_slots[field_name] = value
+
+            state.slots = validated_slots
+
+        # =====================================================================
+        # STEP 3:
+        # Find the next missing field.
+        # =====================================================================
+
+        missing = [
+            name
+            for name in PREDICT_FIELD_NAMES
+            if name not in state.slots
+        ]
+
         if missing:
-            next_field = missing[0]
-            label = FIELD_LABELS.get(next_field, next_field)
-            if next_field == "gender":
-                return f"{label} enti? (Male / Female / Other)"
-            return f"{label} entha? (oka number cheppandi)"
 
-        # All slots collected -> run the model.
+            next_field = missing[0]
+
+            # IMPORTANT:
+            # Remember EXACTLY what we are asking.
+            state.pending_field = next_field
+
+            return get_prediction_question(
+                next_field
+            )
+
+        # =====================================================================
+        # STEP 4:
+        # All fields collected -> prediction
+        # =====================================================================
+
         if not self._ensure_model():
+
             state.reset()
+
             return (
                 f"Model files dorakaledu ({self._model_error}). "
                 "fitness_model.pkl mariyu scaler.pkl repo root lo unnayo check cheyandi."
             )
 
         try:
+
             prediction, confidence = predict_activity(
                 self._model_bundle["model"],
                 self._model_bundle["scaler"],
                 state.slots,
                 feature_names=self._model_bundle["feature_names"],
             )
-        except Exception as exc:  # noqa: BLE001
-            state.reset()
-            return f"Prediction fail ayyindi: {exc}"
 
-        description = EXERCISE_DESCRIPTIONS.get(prediction, "")
-        conf_text = f" (confidence {confidence * 100:.1f}%)" if confidence is not None else ""
+        except Exception as exc:
+
+            state.reset()
+
+            return (
+                f"Prediction fail ayyindi: {exc}"
+            )
+
+        description = EXERCISE_DESCRIPTIONS.get(
+            prediction,
+            "",
+        )
+
+        conf_text = (
+            f" (confidence {confidence * 100:.1f}%)"
+            if confidence is not None
+            else ""
+        )
+
         state.reset()
-        reply = f"🎯 Predicted exercise: **{prediction}**{conf_text}."
+
+        reply = (
+            f"🎯 Predicted exercise: **{prediction}**"
+            f"{conf_text}."
+        )
+
         if description:
             reply += f"\n{description}"
-        reply += "\n\n'recommend' ani cheppandi ee exercise ki tips kosam, leda 'log workout' ani cheppi save cheskovachu."
+
+        reply += (
+            "\n\n"
+            "'recommend' ani cheppandi ee exercise ki tips kosam, "
+            "leda 'log workout' ani cheppi save cheskovachu."
+        )
+
         return reply
 
-    # ---- LOG WORKOUT flow -------------------------------------------------
-    def _continue_log_workout(self, message: str, state: AgentState, already_parsed: bool = False) -> str:
-        required = ["exercise_name", "sets", "reps", "duration", "calories_burned"]
+    # =========================================================================
+    # LOG WORKOUT FLOW
+    # =========================================================================
 
-        if not already_parsed:
-            newly_found = extract_workout_slots(message)
-            state.slots.update(newly_found)
+    def _continue_log_workout(
+        self,
+        message: str,
+        state: AgentState,
+        already_parsed: bool = False,
+    ) -> str:
 
-            useful_fields = {k: v for k, v in newly_found.items() if k != "date"}
-            if not useful_fields:
-                missing_now = [name for name in required if name not in state.slots]
-                if missing_now:
-                    next_field = missing_now[0]
-                    bare_number = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*", message)
-                    if next_field == "exercise_name" and not bare_number:
-                        state.slots["exercise_name"] = message.strip().title()
-                    elif bare_number and next_field != "exercise_name":
-                        state.slots[next_field] = float(bare_number.group(1))
+        required = [
+            "exercise_name",
+            "sets",
+            "reps",
+            "duration",
+            "calories_burned",
+        ]
 
-        state.slots.setdefault("date", str(date.today()))
-        missing = [name for name in required if name not in state.slots]
+        # =====================================================================
+        # First message
+        # =====================================================================
+
+        if already_parsed:
+
+            extracted = extract_workout_slots(
+                message
+            )
+
+            validated_slots: Dict[str, Any] = {}
+
+            for field_name, value in extracted.items():
+
+                if field_name == "date":
+
+                    validated_slots[field_name] = value
+                    continue
+
+                valid, _ = validate_workout_field(
+                    field_name,
+                    value,
+                )
+
+                if valid:
+                    validated_slots[field_name] = value
+
+            state.slots.update(
+                validated_slots
+            )
+
+        # =====================================================================
+        # Follow-up answer
+        # =====================================================================
+
+        elif state.pending_field:
+
+            field_name = state.pending_field
+
+            value = parse_answer_for_field(
+                message,
+                field_name,
+            )
+
+            if value is None:
+
+                return (
+                    f"❌ Naku adi ardham kaaledu.\n"
+                    f"{get_workout_question(field_name)}"
+                )
+
+            valid, error_message = validate_workout_field(
+                field_name,
+                value,
+            )
+
+            if not valid:
+
+                return (
+                    f"{error_message}\n\n"
+                    f"{get_workout_question(field_name)}"
+                )
+
+            state.slots[field_name] = value
+
+            state.pending_field = None
+
+        # =====================================================================
+        # Date
+        # =====================================================================
+
+        state.slots.setdefault(
+            "date",
+            str(date.today()),
+        )
+
+        # =====================================================================
+        # Find next missing field
+        # =====================================================================
+
+        missing = [
+            name
+            for name in required
+            if name not in state.slots
+        ]
+
         if missing:
-            prompts = {
-                "exercise_name": "Exercise peru enti?",
-                "sets": "Ela sets chesaru?",
-                "reps": "Prathi set ki ela reps?",
-                "duration": "Enni minutes chesaru?",
-                "calories_burned": "Enni calories burn ayyayi (approx ayina parledu)?",
-            }
-            return prompts[missing[0]]
+
+            next_field = missing[0]
+
+            # IMPORTANT:
+            # Remember exact question.
+            state.pending_field = next_field
+
+            return get_workout_question(
+                next_field
+            )
+
+        # =====================================================================
+        # Save workout
+        # =====================================================================
 
         try:
+
             payload = {
-                "exercise_name": str(state.slots["exercise_name"]).strip() or "Unknown",
-                "sets": int(state.slots["sets"]),
-                "reps": int(state.slots["reps"]),
-                "duration": float(state.slots["duration"]),
-                "calories_burned": float(state.slots["calories_burned"]),
-                "date": state.slots.get("date", str(date.today())),
+                "exercise_name":
+                    str(
+                        state.slots["exercise_name"]
+                    ).strip(),
+
+                "sets":
+                    int(
+                        float(
+                            state.slots["sets"]
+                        )
+                    ),
+
+                "reps":
+                    int(
+                        float(
+                            state.slots["reps"]
+                        )
+                    ),
+
+                "duration":
+                    float(
+                        state.slots["duration"]
+                    ),
+
+                "calories_burned":
+                    float(
+                        state.slots["calories_burned"]
+                    ),
+
+                "date":
+                    state.slots.get(
+                        "date",
+                        str(date.today()),
+                    ),
             }
-            save_workout(payload)
-        except Exception as exc:  # noqa: BLE001
+
+            save_workout(
+                payload
+            )
+
+        except Exception as exc:
+
             state.reset()
-            return f"Workout save cheyadam fail ayyindi: {exc}"
+
+            return (
+                f"Workout save cheyadam fail ayyindi: {exc}"
+            )
 
         state.reset()
+
         return (
-            f"✅ Saved! **{payload['exercise_name']}** — {payload['sets']} sets x {payload['reps']} reps, "
-            f"{payload['duration']:.0f} min, {payload['calories_burned']:.0f} kcal ({payload['date']}).\n"
+            f"✅ Saved! **{payload['exercise_name']}** — "
+            f"{payload['sets']} sets x "
+            f"{payload['reps']} reps, "
+            f"{payload['duration']:.0f} min, "
+            f"{payload['calories_burned']:.0f} kcal "
+            f"({payload['date']}).\n\n"
             "'show my stats' ani cheppi progress chudochu."
         )
 
-    # ---- RECOMMEND ---------------------------------------------------------
-    def _handle_recommend(self, message: str) -> str:
+    # =========================================================================
+    # RECOMMENDATIONS
+    # =========================================================================
+
+    def _handle_recommend(
+        self,
+        message: str,
+    ) -> str:
+
         text = message.lower()
+
         matched_exercise: Optional[str] = None
+
         for exercise_name in EXERCISE_RECOMMENDATIONS.keys():
+
             if exercise_name.lower() in text:
+
                 matched_exercise = exercise_name
+
                 break
 
         if matched_exercise is None:
-            options = ", ".join(list(EXERCISE_RECOMMENDATIONS.keys())[:8])
+
+            options = ", ".join(
+                list(
+                    EXERCISE_RECOMMENDATIONS.keys()
+                )[:8]
+            )
+
             return (
-                "Ee exercise ki tips kavalo cheppandi (e.g. 'tips for running'). "
+                "Ee exercise ki tips kavalo cheppandi "
+                "(e.g. 'tips for running').\n"
                 f"Available options: {options}"
             )
 
-        rec = EXERCISE_RECOMMENDATIONS.get(matched_exercise, DEFAULT_RECOMMENDATION)
-        description = EXERCISE_DESCRIPTIONS.get(matched_exercise, "")
-        lines = [f"💡 **{matched_exercise} recommendations**"]
+        rec = EXERCISE_RECOMMENDATIONS.get(
+            matched_exercise,
+            DEFAULT_RECOMMENDATION,
+        )
+
+        description = EXERCISE_DESCRIPTIONS.get(
+            matched_exercise,
+            "",
+        )
+
+        lines = [
+            f"💡 **{matched_exercise} recommendations**"
+        ]
+
         if description:
-            lines.append(description)
-        warm_up = rec.get("warm_up", [])
+            lines.append(
+                description
+            )
+
+        warm_up = rec.get(
+            "warm_up",
+            [],
+        )
+
         if warm_up:
-            lines.append("Warm-up: " + "; ".join(warm_up))
-        lines.append("Sets & reps: " + str(rec.get("sets_reps", DEFAULT_RECOMMENDATION["sets_reps"])))
-        lines.append("Rest time: " + str(rec.get("rest_time", DEFAULT_RECOMMENDATION["rest_time"])))
-        lines.append("Hydration: " + str(rec.get("hydration", DEFAULT_RECOMMENDATION["hydration"])))
-        lines.append("Nutrition: " + str(rec.get("nutrition", DEFAULT_RECOMMENDATION["nutrition"])))
-        lines.append("Recovery: " + str(rec.get("recovery", DEFAULT_RECOMMENDATION["recovery"])))
+
+            lines.append(
+                "Warm-up: "
+                + "; ".join(warm_up)
+            )
+
+        lines.append(
+            "Sets & reps: "
+            + str(
+                rec.get(
+                    "sets_reps",
+                    DEFAULT_RECOMMENDATION[
+                        "sets_reps"
+                    ],
+                )
+            )
+        )
+
+        lines.append(
+            "Rest time: "
+            + str(
+                rec.get(
+                    "rest_time",
+                    DEFAULT_RECOMMENDATION[
+                        "rest_time"
+                    ],
+                )
+            )
+        )
+
+        lines.append(
+            "Hydration: "
+            + str(
+                rec.get(
+                    "hydration",
+                    DEFAULT_RECOMMENDATION[
+                        "hydration"
+                    ],
+                )
+            )
+        )
+
+        lines.append(
+            "Nutrition: "
+            + str(
+                rec.get(
+                    "nutrition",
+                    DEFAULT_RECOMMENDATION[
+                        "nutrition"
+                    ],
+                )
+            )
+        )
+
+        lines.append(
+            "Recovery: "
+            + str(
+                rec.get(
+                    "recovery",
+                    DEFAULT_RECOMMENDATION[
+                        "recovery"
+                    ],
+                )
+            )
+        )
+
         return "\n".join(lines)
 
-    # ---- HISTORY / PROGRESS -------------------------------------------------
-    def _handle_history(self) -> str:
-        history = load_history()
-        if history.empty:
-            return "Inka workout logs ledu. 'log workout' ani cheppi first entry add cheyandi."
+    # =========================================================================
+    # HISTORY
+    # =========================================================================
 
-        total_workouts = len(history)
-        total_calories = float(history["calories_burned"].sum())
-        total_duration = float(history["duration"].sum())
+    def _handle_history(self) -> str:
+
+        try:
+
+            history = load_history()
+
+        except Exception as exc:
+
+            return (
+                f"History load cheyyadam fail ayyindi: {exc}"
+            )
+
+        if history.empty:
+
+            return (
+                "Inka workout logs ledu. "
+                "'log workout' ani cheppi first entry add cheyandi."
+            )
+
+        total_workouts = len(
+            history
+        )
+
+        total_calories = float(
+            history["calories_burned"].sum()
+        )
+
+        total_duration = float(
+            history["duration"].sum()
+        )
+
         top_exercise = (
-            history["exercise_name"].value_counts().idxmax()
-            if "exercise_name" in history.columns and not history.empty
+            history["exercise_name"]
+            .value_counts()
+            .idxmax()
+            if (
+                "exercise_name" in history.columns
+                and not history.empty
+            )
             else "N/A"
         )
+
         return (
-            f"📊 **Progress summary**\n"
+            "📊 **Progress summary**\n"
             f"- Total workouts: {total_workouts}\n"
             f"- Total calories burned: {total_calories:.0f} kcal\n"
             f"- Total duration: {total_duration:.0f} min\n"
             f"- Most frequent exercise: {top_exercise}"
         )
 
-    # ---- fallback smalltalk ---------------------------------------------
-    def _smalltalk(self, message: str) -> str:
-        return generate_smalltalk_reply(message)
+    # =========================================================================
+    # SMALL TALK
+    # =========================================================================
+
+    def _smalltalk(
+        self,
+        message: str,
+    ) -> str:
+
+        return generate_smalltalk_reply(
+            message
+        )
 
 
-def generate_smalltalk_reply(message: str) -> str:
-    """
-    Rule-based fallback for anything that isn't predict/log/recommend/history.
+# ============================================================================
+# WORKOUT VALIDATION
+# ============================================================================
 
-    To upgrade this into a full LLM-powered agent later, replace the body of
-    this function with a call to your preferred chat model (OpenAI, Anthropic,
-    etc.), passing `message` as the prompt. Keeping it isolated here means the
-    rest of the agent (slot-filling, model calls, tracker) doesn't need to change.
-    """
+def validate_workout_field(
+    field_name: str,
+    value: Any,
+) -> tuple[bool, str]:
+
+    ranges = {
+        "sets": (1, 100),
+        "reps": (1, 1000),
+        "duration": (1, 600),
+        "calories_burned": (1, 5000),
+    }
+
+    if field_name == "exercise_name":
+
+        if not str(value).strip():
+
+            return (
+                False,
+                "Exercise name empty ga undakudadhu.",
+            )
+
+        return True, ""
+
+    if field_name not in ranges:
+
+        return True, ""
+
+    try:
+
+        numeric_value = float(value)
+
+    except (TypeError, ValueError):
+
+        return (
+            False,
+            f"{field_name} ki valid number enter cheyyandi.",
+        )
+
+    minimum, maximum = ranges[
+        field_name
+    ]
+
+    if numeric_value < minimum or numeric_value > maximum:
+
+        labels = {
+            "sets": "Sets",
+            "reps": "Reps",
+            "duration": "Duration",
+            "calories_burned": "Calories",
+        }
+
+        label = labels.get(
+            field_name,
+            field_name,
+        )
+
+        return (
+            False,
+            f"❌ {label} `{numeric_value:g}` valid range lo ledu. "
+            f"Please enter between {minimum} and {maximum}.",
+        )
+
+    return True, ""
+
+
+# ============================================================================
+# SMALL TALK
+# ============================================================================
+
+def generate_smalltalk_reply(
+    message: str,
+) -> str:
+
     tips = [
         "Prathi roju konchem aina move avvadam consistency ki key.",
-        "Workout tarvata 20-30 nims lo protein tీసుకోవడం recovery ki manchidi.",
-        "Nidra (7-8 hrs) kuda training antha important - recovery lo major role.",
-        "Hydration mర్చిపోకండి - workout ki mundu, madhya, tarvata నీళ్ళు తాగండి.",
+        "Workout tarvata recovery ki proper rest important.",
+        "Nidra training antha important - recovery lo major role.",
+        "Hydration marchipokandi - workout mundu, madhya, tarvata neellu tagandi.",
     ]
+
     return (
-        "Idi naku ardham kaledu 🙂 Nenu ee panulu cheyagalanu: predict / log workout / "
-        "recommend / progress. Try cheyandi, e.g. 'predict my exercise' leda 'show my stats'.\n\n"
-        f"Quick tip: {tips[hash(message) % len(tips)]}"
+        "Idi naku ardham kaledu 🙂\n\n"
+        "Nenu ee panulu cheyagalanu:\n"
+        "• Predict exercise\n"
+        "• Log workout\n"
+        "• Give recommendations\n"
+        "• Show progress\n\n"
+        "Example:\n"
+        "`predict my exercise`\n"
+        "`I did running for 30 minutes`\n"
+        "`give me tips for running`\n"
+        "`show my stats`\n\n"
+        f"💡 Quick tip: "
+        f"{tips[hash(message) % len(tips)]}"
     )
