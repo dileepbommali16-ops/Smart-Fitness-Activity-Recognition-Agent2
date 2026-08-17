@@ -1,4 +1,5 @@
 """Smart Fitness Activity Recognition Agent built with Streamlit."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -8,6 +9,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from agent import AgentState, FitnessAgent
 from recommendation import EXERCISE_DESCRIPTIONS, EXERCISE_RECOMMENDATIONS, DEFAULT_RECOMMENDATION
 from utils import FEATURE_FIELDS, load_history, load_model, predict_activity, save_workout
 
@@ -33,13 +35,27 @@ def get_model_bundle() -> Dict[str, Any]:
     return load_model()
 
 
+@st.cache_resource
+def get_agent() -> FitnessAgent:
+    """Create the AI Agent once and reuse it across reruns."""
+    return FitnessAgent()
+
+
 def render_sidebar() -> str:
     """Render the sidebar navigation and return the selected page."""
     st.sidebar.title("🏋️ Fitness Agent")
     st.sidebar.caption("AI-powered activity recognition and fitness coaching")
     page = st.sidebar.radio(
         "Navigate",
-        ["Home", "Predict Exercise", "Workout Tracker", "Fitness Recommendations", "Workout History", "About"],
+        [
+            "Home",
+            "AI Agent",
+            "Predict Exercise",
+            "Workout Tracker",
+            "Fitness Recommendations",
+            "Workout History",
+            "About",
+        ],
         index=0,
     )
     return page
@@ -86,7 +102,6 @@ def render_home() -> None:
 
     st.markdown("### 📊 Dashboard Insights")
     chart_col1, chart_col2 = st.columns(2)
-
     with chart_col1:
         calories_chart = px.bar(
             history,
@@ -97,14 +112,12 @@ def render_home() -> None:
             labels={"date": "Date", "calories_burned": "Calories"},
         )
         st.plotly_chart(calories_chart, use_container_width=True)
-
     with chart_col2:
         freq_chart = history.groupby("date").size().reset_index(name="workouts")
         freq_chart = px.line(freq_chart, x="date", y="workouts", title="Workout Frequency", markers=True)
         st.plotly_chart(freq_chart, use_container_width=True)
 
     chart_col3, chart_col4 = st.columns(2)
-
     with chart_col3:
         dist_chart = px.pie(
             history,
@@ -113,7 +126,6 @@ def render_home() -> None:
             title="Exercise Distribution",
         )
         st.plotly_chart(dist_chart, use_container_width=True)
-
     with chart_col4:
         duration_chart = px.line(
             history,
@@ -124,6 +136,53 @@ def render_home() -> None:
             markers=True,
         )
         st.plotly_chart(duration_chart, use_container_width=True)
+
+
+def render_agent_page() -> None:
+    """Render the conversational AI Agent chat interface."""
+    st.title("🤖 AI Fitness Agent")
+    st.write(
+        "Matladandi natural language lo — predict cheyamani cheppandi, "
+        "workout log cheyamani cheppandi, tips adagandi, leda progress "
+        "adagandi. Agent decide chesukuni correct action tీసుకుంటుంది."
+    )
+
+    agent = get_agent()
+
+    if "agent_chat_history" not in st.session_state:
+        st.session_state.agent_chat_history = [
+            {
+                "role": "assistant",
+                "content": (
+                    "Hi! Nenu nee AI Fitness Agent. Try: "
+                    "'predict my exercise', 'I did running 30 min 300 calories', "
+                    "'give me tips for cycling', or 'show my stats'."
+                ),
+            }
+        ]
+    if "agent_state" not in st.session_state:
+        st.session_state.agent_state = AgentState()
+
+    for turn in st.session_state.agent_chat_history:
+        with st.chat_message(turn["role"]):
+            st.markdown(turn["content"])
+
+    user_message = st.chat_input("Type your message...")
+    if user_message:
+        st.session_state.agent_chat_history.append({"role": "user", "content": user_message})
+        with st.chat_message("user"):
+            st.markdown(user_message)
+
+        reply = agent.respond(user_message, st.session_state.agent_state)
+
+        st.session_state.agent_chat_history.append({"role": "assistant", "content": reply})
+        with st.chat_message("assistant"):
+            st.markdown(reply)
+
+    if st.button("Reset conversation"):
+        st.session_state.agent_chat_history = []
+        st.session_state.agent_state = AgentState()
+        st.rerun()
 
 
 def render_prediction_page() -> None:
@@ -168,7 +227,6 @@ def render_prediction_page() -> None:
 
             description = EXERCISE_DESCRIPTIONS.get(prediction, "This activity is a great addition to your fitness routine.")
             st.markdown(f"**Exercise Description:** {description}")
-
         except Exception as exc:  # pragma: no cover - defensive UI handling
             st.error(f"Prediction failed: {exc}")
 
@@ -206,8 +264,8 @@ def render_tracker_page() -> None:
 def render_history_page() -> None:
     """Render workout history, summaries, and filtering controls."""
     st.title("📚 Workout History")
-    history = load_history()
 
+    history = load_history()
     if history.empty:
         st.info("Workout history is empty. Log a workout to see it here.")
         return
@@ -255,7 +313,6 @@ def render_recommendations_page() -> None:
         st.subheader("Rest Time")
         st.write(recommendation.get("rest_time", DEFAULT_RECOMMENDATION["rest_time"]))
         st.markdown("</div>", unsafe_allow_html=True)
-
     with col2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
         st.subheader("Hydration Advice")
@@ -282,6 +339,7 @@ def render_about_page() -> None:
         """
         - Load a trained classifier and scaler from pickle files.
         - Predict the most likely activity from user-entered health and movement metrics.
+        - Chat with an AI Agent that decides on its own whether to predict, log, recommend, or report progress.
         - Save workouts locally in CSV format.
         - Receive suggestions for warm-up, nutrition, protein, and recovery.
         """
@@ -294,6 +352,8 @@ def main() -> None:
 
     if page == "Home":
         render_home()
+    elif page == "AI Agent":
+        render_agent_page()
     elif page == "Predict Exercise":
         render_prediction_page()
     elif page == "Workout Tracker":
