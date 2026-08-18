@@ -253,26 +253,189 @@ def _parse_answer_for_field(message: str, field_name: str) -> Any:
     return None
 
 def _prediction_question(field_name: str) -> str:
-    label = FIELD_LABELS.get(field_name, field_name)
-    if field_name == "gender":
-        return f"{label} enti? (Male / Female / Other)"
-    return f"{label} entha? (value cheppandi)"
+    """Ask a clear, friendly bilingual question with a short explanation."""
+    questions = {
+        "age": (
+            "👤 **Age / వయస్సు**
+"
+            "How old are you? / మీ వయస్సు ఎంత?
+"
+            "Example: `21`"
+        ),
+        "gender": (
+            "👤 **Gender / లింగం**
+"
+            "Please tell me your gender. / మీ లింగాన్ని చెప్పండి.
+"
+            "Choose: `Male`, `Female`, or `Other`"
+        ),
+        "height_cm": (
+            "📏 **Height / ఎత్తు**
+"
+            "What is your height in centimeters (cm)? / మీ ఎత్తు ఎన్ని సెంటీమీటర్లు?
+"
+            "Example: `170 cm`"
+        ),
+        "weight_kg": (
+            "⚖️ **Weight / బరువు**
+"
+            "What is your weight in kilograms (kg)? / మీ బరువు ఎన్ని కిలోలు?
+"
+            "Example: `65 kg`"
+        ),
+        "heart_rate": (
+            "❤️ **Heart Rate / గుండె వేగం**
+"
+            "What is your heart rate in beats per minute (BPM)? "
+            "This is the number shown by a smartwatch, fitness band, or heart-rate monitor. / "
+            "మీ smartwatch, fitness band లేదా heart-rate monitor లో కనిపించే BPM విలువను చెప్పండి.
+"
+            "Example: `80 BPM`"
+        ),
+        "body_temp_c": (
+            "🌡️ **Body Temperature / శరీర ఉష్ణోగ్రత**
+"
+            "What is your body temperature in °C? / మీ శరీర ఉష్ణోగ్రత ఎంత °C?
+"
+            "Example: `36.8 °C`"
+        ),
+        "duration_min": (
+            "⏱️ **Workout Duration / వ్యాయామ సమయం**
+"
+            "How many minutes did you exercise? / మీరు ఎన్ని నిమిషాలు వ్యాయామం చేశారు?
+"
+            "Example: `30 minutes`"
+        ),
+        "calories_burned": (
+            "🔥 **Calories Burned / ఖర్చైన కేలరీలు**
+"
+            "Approximately how many calories did you burn? / సుమారుగా ఎన్ని కేలరీలు ఖర్చయ్యాయి?
+"
+            "Example: `250 calories`"
+        ),
+        "steps": (
+            "👣 **Steps / అడుగులు**
+"
+            "How many steps did you take? / మీరు ఎన్ని అడుగులు వేశారు?
+"
+            "Example: `5000 steps`"
+        ),
+        "distance_km": (
+            "📍 **Distance / దూరం**
+"
+            "How many kilometers did you cover? / మీరు ఎన్ని కిలోమీటర్లు నడిచారు లేదా పరిగెత్తారు?
+"
+            "Example: `3.5 km`"
+        ),
+    }
+    return questions.get(
+        field_name,
+        f"Please provide your {FIELD_LABELS.get(field_name, field_name)}. / "
+        f"దయచేసి {FIELD_LABELS.get(field_name, field_name)} వివరాన్ని ఇవ్వండి."
+    )
 
 def _unknown_response(field_name: str, state: AgentState) -> str:
+    """Handle 'I don't know' gracefully and explain why the field is needed."""
     label = FIELD_LABELS.get(field_name, field_name)
     state.unknown_attempts += 1
-    if state.unknown_attempts == 1:
-        return (
-            f"Okay 👍 **{label}** value meeku teliyakapothe parledhu.\n"
-            f"Kaani ee prediction model ki {label} required.\n\n"
-            f"Please actual value enter cheyyandi. Example: "
-            f"`{_prediction_example(field_name)}`"
-        )
-    return (
-        f"⚠️ **{label}** ni skip cheyyadam valla prediction run cheyyalenu.\n"
-        f"Please {label} value enter cheyyandi, or measurement chesi try cheyyandi.\n\n"
-        f"Example: `{_prediction_example(field_name)}`"
+
+    explanations = {
+        "heart_rate": (
+            "Heart rate means the number of times your heart beats in one minute. "
+            "You can usually find it on a smartwatch, fitness band, or heart-rate monitor. "
+            " / Heart rate అంటే ఒక నిమిషంలో మీ గుండె ఎన్ని సార్లు కొట్టుకుంటుందో చూపించే BPM విలువ. "
+            "ఇది సాధారణంగా smartwatch, fitness band లేదా heart-rate monitor లో కనిపిస్తుంది."
+        ),
+        "height_cm": (
+            "Height means your body height measured in centimeters. "
+            "/ Height అంటే మీ శరీర ఎత్తును సెంటీమీటర్లలో కొలిచిన విలువ."
+        ),
+        "weight_kg": (
+            "Weight means your body weight measured in kilograms. "
+            "/ Weight అంటే మీ శరీర బరువును కిలోల్లో కొలిచిన విలువ."
+        ),
+        "body_temp_c": (
+            "Body temperature is your temperature measured in degrees Celsius. "
+            "/ Body temperature అంటే °C లో కొలిచిన మీ శరీర ఉష్ణోగ్రత."
+        ),
+        "duration_min": (
+            "Duration means how long you exercised, measured in minutes. "
+            "/ Duration అంటే మీరు ఎంతసేపు వ్యాయామం చేశారో నిమిషాల్లో చెప్పే సమయం."
+        ),
+        "calories_burned": (
+            "Calories burned is the approximate energy you used during the workout. "
+            "/ Calories burned అంటే వ్యాయామం సమయంలో సుమారుగా ఖర్చైన శక్తి."
+        ),
+        "steps": (
+            "Steps means the number of steps you took during the activity. "
+            "/ Steps అంటే మీరు activity సమయంలో వేసిన మొత్తం అడుగులు."
+        ),
+        "distance_km": (
+            "Distance means how far you walked or ran, measured in kilometers. "
+            "/ Distance అంటే మీరు నడిచిన లేదా పరిగెత్తిన దూరాన్ని కిలోమీటర్లలో చెప్పేది."
+        ),
+        "age": (
+            "Age means your current age in years. / Age అంటే మీ ప్రస్తుత వయస్సు."
+        ),
+    }
+
+    explanation = explanations.get(
+        field_name,
+        f"This information is required for the prediction. / ఈ సమాచారం prediction కోసం అవసరం."
     )
+
+    return (
+        "No problem 😊 I can explain it.
+
+"
+        f"💡 **What does {label} mean?**
+"
+        f"{explanation}
+
+"
+        f"📝 **Please enter:** `{_prediction_example(field_name)}` "
+        "(or your actual value).
+
+"
+        "If you still don't know it, tell me and I'll explain where you can find it."
+    )
+
+def _needs_explanation(message: str) -> bool:
+    """Detect when the user is asking what the current question means."""
+    normalized = message.lower().strip()
+
+    phrases = [
+        "i don't understand",
+        "i dont understand",
+        "don't understand",
+        "dont understand",
+        "what does this mean",
+        "what is this",
+        "what do you mean",
+        "explain",
+        "ardham kaledu",
+        "ardham kaaledu",
+        "ardham kavatledu",
+        "emi ardham kaledu",
+        "emiti",
+        "enti idi",
+    ]
+
+    return any(phrase in normalized for phrase in phrases)
+
+
+def _explanation_response(field_name: str) -> str:
+    """Explain the current field and then politely ask for the answer."""
+    return (
+        "Sure 😊 I'll explain it simply.
+
+"
+        + _prediction_question(field_name)
+        + "\n\n"
+        "If you know the value, send it now. "
+        "If you don't know it, type **I don't know** and I'll tell you where to find it."
+    )
+
 
 def _prediction_example(field_name: str) -> str:
     examples = {
@@ -291,13 +454,40 @@ def _prediction_example(field_name: str) -> str:
 
 def get_workout_question(field_name: str) -> str:
     questions = {
-        "exercise_name": "Exercise peru enti?",
-        "sets": "Enni sets chesaru?",
-        "reps": "Prathi set ki enni reps chesaru?",
-        "duration": "Enni minutes chesaru?",
-        "calories_burned": "Enni calories burn ayyayi? Approx value ayina parledu?",
+        "exercise_name": (
+            "🏋️ **Exercise / వ్యాయామం**\n"
+            "What exercise did you do? / మీరు ఏ వ్యాయామం చేశారు?\n"
+            "Example: `Running`"
+        ),
+        "sets": (
+            "🔢 **Sets / సెట్స్**\n"
+            "A set is one group of repetitions. How many sets did you complete? "
+            "/ ఒక set అంటే repetitions యొక్క ఒక group. మీరు ఎన్ని sets పూర్తి చేశారు?\n"
+            "Example: `3 sets`"
+        ),
+        "reps": (
+            "🔁 **Reps / రిపిటిషన్స్**\n"
+            "How many repetitions did you do in each set? "
+            "/ ప్రతి set లో ఎన్ని repetitions చేశారు?\n"
+            "Example: `12 reps`"
+        ),
+        "duration": (
+            "⏱️ **Duration / సమయం**\n"
+            "How long did you do the workout? Please give the time in minutes. "
+            "/ మీరు ఎంతసేపు workout చేశారు? నిమిషాల్లో చెప్పండి.\n"
+            "Example: `30 minutes`"
+        ),
+        "calories_burned": (
+            "🔥 **Calories Burned / ఖర్చైన కేలరీలు**\n"
+            "Approximately how many calories did you burn? "
+            "/ సుమారుగా ఎన్ని calories burn అయ్యాయి?\n"
+            "Example: `250 calories`"
+        ),
     }
-    return questions.get(field_name, f"{field_name} enti?")
+    return questions.get(
+        field_name,
+        f"Please provide {field_name}. / దయచేసి {field_name} వివరాన్ని ఇవ్వండి."
+    )
 
 def validate_workout_field(field_name: str, value: Any) -> tuple[bool, str]:
     if field_name == "exercise_name":
@@ -410,6 +600,9 @@ class FitnessAgent:
         if not already_parsed and state.pending_field:
             field_name = state.pending_field
 
+            if _needs_explanation(message):
+                return _explanation_response(field_name)
+
             if _is_unknown_answer(message):
                 return _unknown_response(field_name, state)
 
@@ -417,14 +610,20 @@ class FitnessAgent:
 
             if value is None:
                 return (
-                    f"❌ Naku `{message}` ni {FIELD_LABELS.get(field_name, field_name)} "
-                    f"ga ardham kaaledu.\n\n"
-                    f"{_prediction_question(field_name)}"
+                    "No problem 😊 I didn't quite understand that answer. "
+                    "Let me explain what I'm asking.\n\n"
+                    + _prediction_question(field_name)
+                    + "\n\n"
+                    "You can reply with just the value, for example `80`."
                 )
 
             valid, error = _validate_prediction_value(field_name, value)
             if not valid:
-                return f"{error}\n\n{_prediction_question(field_name)}"
+                return (
+                    f"{error}\n\n"
+                    "No worries 😊 Let's try that again.\n"
+                    + _prediction_question(field_name)
+                )
 
             state.slots[field_name] = value
             state.pending_field = None
@@ -493,32 +692,44 @@ class FitnessAgent:
         if not already_parsed and state.pending_field:
             field_name = state.pending_field
 
-            if _is_unknown_answer(message):
-                label = {
-                    "exercise_name": "exercise name",
-                    "sets": "sets",
-                    "reps": "reps",
-                    "duration": "duration",
-                    "calories_burned": "calories",
-                }.get(field_name, field_name)
-
+            if _needs_explanation(message):
                 return (
-                    f"Okay 👍 **{label}** value teliyakapothe save cheyyalenu.\n"
-                    f"Please actual value enter cheyyandi.\n"
-                    f"{get_workout_question(field_name)}"
+                    "Sure 😊 I'll explain it simply.\n\n"
+                    + get_workout_question(field_name)
+                    + "\n\n"
+                    "If you know the value, send it now. "
+                    "If you don't know it, type **I don't know**."
+                )
+
+            if _is_unknown_answer(message):
+                return (
+                    "No problem 😊 That's okay.
+
+"
+                    + get_workout_question(field_name)
+                    + "\n\n"
+                    "This detail is needed to save the workout correctly. "
+                    "If you don't know the exact value, an approximate value is okay where appropriate."
                 )
 
             value = _parse_answer_for_field(message, field_name)
 
             if value is None:
                 return (
-                    f"❌ Naku adi ardham kaaledu.\n"
-                    f"{get_workout_question(field_name)}"
+                    "No problem 😊 I didn't quite understand that answer. "
+                    "Let me explain the question again.\n\n"
+                    + get_workout_question(field_name)
+                    + "\n\n"
+                    "You can reply with just the value, for example `3`."
                 )
 
             valid, error = validate_workout_field(field_name, value)
             if not valid:
-                return f"{error}\n\n{get_workout_question(field_name)}"
+                return (
+                    f"{error}\n\n"
+                    "No worries 😊 Let's try again.\n"
+                    + get_workout_question(field_name)
+                )
 
             state.slots[field_name] = value
             state.pending_field = None
