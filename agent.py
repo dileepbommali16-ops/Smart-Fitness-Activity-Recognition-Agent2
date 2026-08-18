@@ -347,7 +347,8 @@ def validate_field(
         }:
             return (
                 False,
-                "Gender Male / Female / Other lo enter cheyyandi.",
+                "అయ్యో, అది నాకు అర్థం కాలేదు 🙂 Gender కోసం "
+                "**Male**, **Female**, లేదా **Other** అని matrame రాయండి.",
             )
 
         return True, ""
@@ -358,7 +359,12 @@ def validate_field(
     try:
         numeric_value = float(value)
     except (TypeError, ValueError):
-        return False, f"{FIELD_LABELS.get(field_name, field_name)} ki number enter cheyyandi."
+        label = FIELD_LABELS.get(field_name, field_name)
+        return (
+            False,
+            f"అది నాకు ఒక సంఖ్యలా అనిపించలేదు 🙂 {label} కోసం దయచేసి "
+            f"కేవలం ఒక number మాత్రమే enter చేయండి (ఉదా: 25).",
+        )
 
     minimum, maximum = FIELD_RANGES[field_name]
 
@@ -371,8 +377,9 @@ def validate_field(
 
         return (
             False,
-            f"❌ {label} value `{numeric_value:g}` valid range lo ledu. "
-            f"Please enter a value between {minimum} and {maximum}.",
+            f"హ్మ్, `{numeric_value:g}` అనేది {label} కి కొంచెం సరైన విలువ "
+            f"కాదు అనిపిస్తోంది — ఇది సాధారణంగా **{minimum} నుండి {maximum}** మధ్య "
+            f"ఉంటుంది. దయచేసి మళ్ళీ సరైన విలువ చెప్పండి.",
         )
 
     return True, ""
@@ -446,10 +453,23 @@ def get_prediction_question(field_name: str) -> str:
         field_name,
     )
 
-    if field_name == "gender":
-        return f"{label} enti? (Male / Female / Other)"
+    friendly_questions = {
+        "gender": "మీ **Gender** ఏంటో చెప్పండి — Male, Female, లేదా Other అని రాయండి 🙂",
+        "age": "మీ **Age** ఎంత? (ఉదా: 25)",
+        "height_cm": "మీ **Height** ఎంత, cm లో చెప్పండి (ఉదా: 170)",
+        "weight_kg": "మీ **Weight** ఎంత, kg లో చెప్పండి (ఉదా: 65)",
+        "heart_rate": "Workout చేసేటప్పుడు మీ **Heart Rate** ఎంత ఉంటుంది, bpm లో? (ఉదా: 110)",
+        "body_temp_c": "మీ **Body Temperature** ఎంత, °C లో? (ఉదా: 37)",
+        "duration_min": "ఎంత సేపు workout చేసారు, minutes లో చెప్పండి (ఉదా: 30)",
+        "calories_burned": "సుమారుగా ఎన్ని **Calories** burn అయ్యాయో చెప్పండి (ఉదా: 250)",
+        "steps": "ఎన్ని **Steps** వేసారు? (ఉదా: 5000)",
+        "distance_km": "ఎంత **Distance** కవర్ చేసారు, km లో? (ఉదా: 3.5)",
+    }
 
-    return f"{label} entha? (oka number cheppandi)"
+    return friendly_questions.get(
+        field_name,
+        f"{label} entha? దయచేసి ఒక విలువ చెప్పండి.",
+    )
 
 
 def get_workout_question(field_name: str) -> str:
@@ -457,24 +477,24 @@ def get_workout_question(field_name: str) -> str:
     questions = {
 
         "exercise_name":
-            "Exercise peru enti?",
+            "బాగుంది! ఏ **exercise** చేసారో పేరు చెప్పండి (ఉదా: Running, Squats, Cycling) 🏋️",
 
         "sets":
-            "Enni sets chesaru?",
+            "సూపర్! ఎన్ని **sets** చేసారు? (ఉదా: 3)",
 
         "reps":
-            "Prathi set ki enni reps chesaru?",
+            "ప్రతి set కి ఎన్ని **reps** చేసారు? (ఉదా: 12)",
 
         "duration":
-            "Enni minutes chesaru?",
+            "మొత్తం ఎన్ని **minutes** workout చేసారు? (ఉదా: 20)",
 
         "calories_burned":
-            "Enni calories burn ayyayi? Approx value ayina parledu.",
+            "సుమారుగా ఎన్ని **calories** burn అయ్యాయో చెప్పండి — exact గా తెలియకపోతే అంచనా చెప్పినా చాలు (ఉదా: 180)",
     }
 
     return questions.get(
         field_name,
-        f"{field_name} enti?",
+        f"{field_name} గురించి చెప్పండి?",
     )
 
 
@@ -672,7 +692,7 @@ class FitnessAgent:
             if value is None:
 
                 return (
-                    f"❌ Naku adi ardham kaaledu.\n"
+                    f"అయ్యో, నాకు అది సరిగ్గా అర్థం కాలేదు 🙂 మళ్ళీ ఒకసారి ప్రయత్నించండి:\n\n"
                     f"{get_prediction_question(field_name)}"
                 )
 
@@ -876,7 +896,7 @@ class FitnessAgent:
             if value is None:
 
                 return (
-                    f"❌ Naku adi ardham kaaledu.\n"
+                    f"అయ్యో, నాకు అది సరిగ్గా అర్థం కాలేదు 🙂 మళ్ళీ ఒకసారి ప్రయత్నించండి:\n\n"
                     f"{get_workout_question(field_name)}"
                 )
 
@@ -1212,7 +1232,8 @@ def validate_workout_field(
 
             return (
                 False,
-                "Exercise name empty ga undakudadhu.",
+                "అయ్యో, exercise పేరు ఖాళీగా ఉండకూడదు 🙂 దయచేసి ఏదైనా "
+                "exercise పేరు చెప్పండి (ఉదా: Running, Push-ups, Cycling).",
             )
 
         return True, ""
@@ -1227,9 +1248,18 @@ def validate_workout_field(
 
     except (TypeError, ValueError):
 
+        labels = {
+            "sets": "Sets",
+            "reps": "Reps",
+            "duration": "Duration",
+            "calories_burned": "Calories",
+        }
+        label = labels.get(field_name, field_name)
+
         return (
             False,
-            f"{field_name} ki valid number enter cheyyandi.",
+            f"అది నాకు సంఖ్యలా అనిపించలేదు 🙂 {label} కోసం దయచేసి "
+            f"కేవలం ఒక number మాత్రమే చెప్పండి.",
         )
 
     minimum, maximum = ranges[
@@ -1252,8 +1282,9 @@ def validate_workout_field(
 
         return (
             False,
-            f"❌ {label} `{numeric_value:g}` valid range lo ledu. "
-            f"Please enter between {minimum} and {maximum}.",
+            f"హ్మ్, `{numeric_value:g}` {label} కి కొంచెం సరైనది "
+            f"కాదు అనిపిస్తోంది — ఇది సాధారణంగా **{minimum} నుండి {maximum}** "
+            f"మధ్య ఉంటుంది. దయచేసి మళ్ళీ సరైన విలువ చెప్పండి.",
         )
 
     return True, ""
